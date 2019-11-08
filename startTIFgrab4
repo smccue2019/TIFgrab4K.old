@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd /home/data/src/TIFgrab4
+./TIFgrab.py
