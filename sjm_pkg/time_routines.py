@@ -2,6 +2,11 @@
 
 from PyQt5.QtCore import QDateTime, QTime
 
+def mysystime():
+    now = QDateTime.currentDateTime()
+    mysystime = now.toString("yyyyMMddhhmmss.z")
+    return mysystime
+
 def systime():
     now = QDateTime.currentDateTime()
     systime = now.toString("yyyyMMddhhmmss.zz")

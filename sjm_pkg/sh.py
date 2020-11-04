@@ -39,9 +39,7 @@ class SmartHubComm(QObject):
 
         try:
             self.sock.connectToHost(self.smarthubIP, 9990)
-            if self.sock.waitForConnected(1000):
-                print("Smarthub query")
-            else:
+            if not self.sock.waitForConnected(1000):
                 errstr = "Error Communicating with SmartHub"
                 print(errstr)
         except:
@@ -69,8 +67,6 @@ class SmartHubComm(QObject):
         self.smhub_status_block += inblock
         self.msg_total = self.msg_total + bytes_avail
 
-        #print("Smarthub header size", len(self.smhub_status_block))
-        
         if self.msg_total >= self.min_smhub_status_size:
             self.sock.close()
             self.new_fullblock.emit(self.smhub_status_block)
@@ -79,11 +75,6 @@ class SmartHubComm(QObject):
 
         blocklist = ()
         blocklist = fullblock.split('\n')
-
-        #print(blocklist)
-        #print("***")
-        #print("***")
-        #print("***")
         
         ila = []; ola = []; vra = []; inportl = []; inlabell = []
         outportl = []; outlabell = []; routein = []; routeout = []
@@ -94,23 +85,20 @@ class SmartHubComm(QObject):
         vore = re.compile('^VIDEO OUTPUT ROUTING:$')
 
         modind = [i for i, item in enumerate (blocklist) if modre.match(item)][0]
-        #print(modind)
-        self.raw_model_string = str(blocklist[modind])
-        print("Smarthub model:",self.raw_model_string)
-        # Model name: Blackmagic Smart Videohub 12 x 12
 
-        # Find lines starting the input label list, output label list, and routing list"
+        self.raw_model_string = str(blocklist[modind])
+        #print("Smarthub model:",self.raw_model_string)
+
+        # Find lines starting the input label list, output label list, and routing list
         ilind = [i for i, item in enumerate (blocklist) if ilre.match(item)][0]
         olind = [i for i, item in enumerate (blocklist) if olre.match(item)][0]
         voind = [i for i, item in enumerate (blocklist) if vore.match(item)][0]
 
         # Read in the input and output label blocks, and the routing list
         for i in range((ilind+1), (ilind+(self.router_dim+1))):
-            #print(blocklist[i])
             ila.append(blocklist[i])
 
         for i in range((olind+1), (olind+(self.router_dim+1))):
-            #print(blocklist[i])
             ola.append(blocklist[i])
 
         # The routing list is just two numbers (input port and matched output port).

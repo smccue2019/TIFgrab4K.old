@@ -5,13 +5,12 @@ from PyQt5.QtGui import QPixmap, QImage, QColor
 from PyQt5.QtWidgets import QMainWindow, QApplication, QSizePolicy
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtMultimedia import QCamera, QCameraImageCapture,QVideoFrame,QAbstractVideoBuffer,QCameraInfo,QImageEncoderSettings
-from PyQt5.QtMultimedia import QCameraViewfinderSettings
-import sys, signal, os, traceback
+from PyQt5.QtMultimedia import QCameraViewfinderSettings,QMediaMetaData
+import sys, signal, os, traceback, re
 from glob import glob
 from configparser import ConfigParser
-# import pyudev
 from sjm_pkg.timergb import TimerGB
-from sjm_pkg.time_routines import systime, sysdate
+from sjm_pkg.time_routines import mysystime, sysdate
 from sjm_pkg.udev_routines import get_v4l_device_list
 from sjm_pkg.sh import SmartHubComm
 
@@ -30,20 +29,6 @@ class TIFgrabGUI(QMainWindow):
         self.ui = Ui_TIFgrabMW()
         self.ui.setupUi(self)
 
-        ################ Smarthub query setup #################
-        self.sh = SmartHubComm()
-        self.do_smarthub_query()  # initializes labels
-        #self.target_smarthub_outportlabel = self.camera_label
-        
-        # Set up a timer to query the Smarthub every 60 seconds
-#        self.sh_query_timer = QTimer()
-#        self.sh_query_timer.timeout.connect(self.do_smarthub_query)
-#        self.sh_query_timer.start(30 * 1000)
-
-        self.res4K = QSize(3840,2160)
-        self.res1080 = QSize(1920, 1080)
-        self.card_res = self.res4K
-        self.crop_rect = QRect(555, 310, 2740, 1540);
         ###                                              ###
         
         target_capdev_serialnum = capcard_short[self.sys_device]
@@ -89,13 +74,20 @@ class TIFgrabGUI(QMainWindow):
         self.cam1.start()
         
     def on_grab_button(self):
+        self.sh = SmartHubComm()
+        self.sh.new_inouts.connect(self.on_new_sh_inouts)
         self.do_smarthub_query()
         # Built in delay before invoking capture
         QTimer.singleShot(1000, self.do_capture)
 
+    def on_timer_capture(self):
+        self.sh = SmartHubComm()
+        self.sh.new_inouts.connect(self.on_new_sh_inouts)
+        self.do_smarthub_query()
+
     def do_capture(self):
         self.cam1.searchAndLock()
-        self.capture_time = systime()
+        self.capture_time = mysystime()
         self.capture_name = self.camera_label + "_" + self.capture_time + ".tif"
         self.cam1_capture.capture()
         self.cam1.unlock()
@@ -104,7 +96,6 @@ class TIFgrabGUI(QMainWindow):
 
         is1080 = self.check_4k_or_1080(captured_image)
         if is1080:
-            print("Image source is 1080i")
             captured_image = captured_image.copy(self.crop_rect)
 
         # The image to be displayed on screen
@@ -154,31 +145,33 @@ class TIFgrabGUI(QMainWindow):
     def list_pic_stats(self, theImage):
         theSize = theImage.size()
         sizestr = ("Size:" + str(theImage.size()))
-#        depthstr = ("Depth:%s ") % (self.captured2pixmap.depth())
-#        bmapstr = ("Is Bitmap?:%s") % (self.captured2pixmap.isQBitmap())
-#        alphastr = ("Has alpha?:%s") % (self.captured2pixmap.hasAlphaChannel())
         self.ui.PicStats.setPlainText(self.sys_device)
         self.ui.PicStats.appendPlainText(sizestr)
-#        self.ui.PicStats.appendPlainText(depthstr)
 
     def do_smarthub_query(self):
         self.sh.invoke_query_of_smhub()
-        (self.ipl, self.ill, self.opl, self.oll, self.routein, self.routeout) = self.sh.get_smhub_inouts()
 
+    def on_new_sh_inouts(self,ipl, ill, opl, oll, rtein, rteout):
+        self.ill = ill
+        self.rtein = rtein
         self.get_smarthub_label()
         
     def get_smarthub_label(self):
         if (self.use_smarthub == True):
-            my_in_num = int(self.routein[self.smarthub_outportnum_to_me])
+            my_in_num = int(self.rtein[self.smarthub_outportnum_to_me])
             self.camera_label = self.ill[my_in_num]
-            self.camera_label.replace(" ","")
-            
+            self.camera_label = remove_spaces(self.camera_label)
         # else camera_label is defined by IMAGE_PREFIX of the ini file.
         
     def on_timerradio_button(self):
         if self.ui.TimerRadio.isChecked():
             self.ui.grabButton.setEnabled(False)
+
+            # Query the Smarthub only once for the source label
+            self.sh = SmartHubComm()
+            self.sh.new_inouts.connect(self.on_new_sh_inouts)
             self.do_smarthub_query()
+
             self.add_timer_groupbox()
         if not self.ui.TimerRadio.isChecked():
            if self.timergb:
@@ -190,7 +183,7 @@ class TIFgrabGUI(QMainWindow):
     def add_timer_groupbox(self):
 
         self.timergb = TimerGB(75,100)
-#        self.timergb.grab_timeout.connect(self.on_grab_button)
+
         self.timergb.grab_timeout.connect(self.do_capture)
         self.timergb.gb_closed.connect(self.on_timergb_closed)
         self.timergb.show()
@@ -242,17 +235,36 @@ class TIFgrabGUI(QMainWindow):
         cf.read(ini_filename)
         self.sh_ip=cf.get('SHUB','SHUB_IP')
 
+        # In case proper comms with Smarthub arent working
         use_sh = cf.get('SHUB','USE_SH')
         if (use_sh == "T"):
             self.use_smarthub=True
         else:
             self.use_smarthub=False
-            self.camera_label=cf.get('LABELS','IMAGE_PREFIX')
+            self.camera_label=cf.get('IMAGE','IMAGE_PREFIX')
             print("Using filename prefix from ini file is", self.camera_label)
 
         self.sys_device=cf.get('CAP_CARD','CAPCARD_UNIX_DEV')
         self.smarthub_outportnum_to_me = int(cf.get('SHUB','FROM_SHUB_LABEL_PORTNUM'))
+
+        # Supports switching between capture of 3840x2160 and
+        # 1920x1080 video. Note that in practice the Epiphan
+        # does not scale 1:1 the image area of a 1920x1080 input.
+        # Experimentally determined to be about 2740x1540, so
+        # thats what used as the cropping rectangle.
+        crop_rect_x = int(cf.get('IMAGE','CROP_RECT_ORIGX'))
+        crop_rect_y = int(cf.get('IMAGE','CROP_RECT_ORIGY'))
+        crop_rect_width = int(cf.get('IMAGE','CROP_RECT_WIDTH'))
+        crop_rect_height = int(cf.get('IMAGE','CROP_RECT_HEIGHT'))
         
+        self.res4K = QSize(3840,2160)
+        self.res1080 = QSize(1920, 1080)
+        self.card_res = self.res4K
+        self.crop_rect = QRect(crop_rect_x, crop_rect_y, crop_rect_width, crop_rect_height)
+        print(self.crop_rect)
+        # Retained as a precaution. Uncomment as necessary.
+        #self.crop_rect = QRect(555, 310, 2740, 1540);
+
     def manage_daily_folder(self):
         # Tests for existence of folder to hold the date's captures.
         # If folder doesn't exist, creates it.
@@ -325,6 +337,9 @@ class ImageTester(QObject):
     def get_blank_status(self):
         return(self.is_blank)
 
+def remove_spaces(instring):
+    pattern = re.compile(r'\s+')
+    return re.sub(pattern, '', instring)
         
 if __name__ == "__main__":
 
